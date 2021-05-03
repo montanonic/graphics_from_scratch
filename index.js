@@ -8,10 +8,30 @@ let selectedSphere // updated with the currently selected sphere
 let O = vect(0, 0, 0)
 let scene = {
     spheres: [
-        { center: vect(0, -1, 3), radius: 1, color: [255, 0, 0] },
-        { center: vect(2, 0, 4), radius: 1, color: [0, 0, 255] },
-        { center: vect(-2, 0, 4), radius: 1, color: [0, 255, 0] },
-        { center: vect(0, -5001, 0), radius: 5000, color: [255, 255, 0] },
+        {
+            center: vect(0, -1, 3), radius: 1, color: [255, 0, 0],
+            specular: 500, // Shiny
+            reflective: 0.9, // a bit
+        },
+        {
+            center: vect(2, 0, 4), radius: 1, color: [0, 0, 255],
+            specular: 500, // Shiny
+            reflective: 0.3, // a bit more
+        },
+        {
+            center: vect(-2, 0, 4), radius: 1, color: [0, 255, 0],
+            specular: 10, // Somewhat shiny
+            reflective: 0.4, // even more
+        },
+        {
+            center: vect(0, -5001, 0), radius: 5000, color: [255, 255, 0],
+            specular: 1000, // Very shiny
+            reflective: 0.5, // half reflective
+        },
+        // for the point light
+        // {
+        //     center: vect(2, 1, 0), radius: 0.1, color: [0, 0, 0]
+        // }
     ],
     lights: [
         { type: 'ambient', intensity: 0.2 },
@@ -77,9 +97,9 @@ window.addEventListener('keyup', e => currentKeys.delete(e.key))
 
 window.addEventListener('keypress', e => {
     if (selectedSphere) {
-        if (e.key == 'g') {
+        if (e.key == 'h') {
             selectedSphere.center.z += 0.1
-        } else if (e.key == 'h') {
+        } else if (e.key == 'g') {
             selectedSphere.center.z -= 0.1
         }
     }
@@ -190,23 +210,11 @@ function vect(x, y, z) {
  */
 
 // for all the glory of raytracing this just returs a color at the end of the day
-function traceRay({ origin, distanceToViewport, tMin, tMax, scene, lighting = false }) {
-    let closestT = Number.POSITIVE_INFINITY
-    let closestSphere = null
-    for (let sphere of scene.spheres) {
-        let [t1, t2] = intersectRaySphere({ origin, distance: distanceToViewport, sphere })
-        if (t1 >= tMin && t1 <= tMax && t1 < closestT) {
-            closestT = t1
-            closestSphere = sphere
-        }
-        // t2 is always further out than t1 and so this code will not matter
-        // right?? little confused oh, the answer is that when *inside* a sphere
-        // itself these distances change. still not necessary to have this code
-        // because rendering "inside" looks weird regardless
-        if (t2 < closestT && t2 >= tMin && t2 <= tMax) {
-            closestT = t2
-            closestSphere = sphere
-        }
+function traceRay({ origin, distanceToViewport, tMin, tMax, scene, recursionDepth = 4, lighting = false, returnSphere = false }) {
+    let [closestSphere, closestT] = closestIntersection({ origin, distanceToViewport, tMin, tMax })
+
+    if (returnSphere) {
+        return closestSphere
     }
 
     if (closestSphere === null) {
@@ -217,8 +225,33 @@ function traceRay({ origin, distanceToViewport, tMin, tMax, scene, lighting = fa
             let P = vectAdd(origin, vectScale(closestT, distanceToViewport))
             // the normal to the sphere at that point
             let N = sphereNormal({ point: P, sphere: closestSphere })
-            let intensityAtPoint = computeLighting({ point: P, normal: N, scene })
-            return scaleColor(intensityAtPoint, closestSphere.color)
+            let intensityAtPoint = computeLighting({
+                point: P, normal: N, scene,
+                specularExponent: closestSphere.specular,
+                vecToCamera: vectScale(-1, distanceToViewport)
+            })
+
+            let localColor = scaleColor(intensityAtPoint, closestSphere.color)
+
+            // Compute reflection
+            let r = closestSphere.reflective
+            // Exit early for nonreflective spheres or when we run out of recursion
+            if (r == null || r <= 0 || recursionDepth <= 0) {
+                return localColor
+            }
+
+            // moves away from the sphere towards a surface that it will reflect (possibly recursively)
+            let reflectedVector = reflectRay({ ray: vectScale(-1, distanceToViewport), normal: N })
+            let reflectedColor = traceRay({
+                origin: P, distanceToViewport: reflectedVector, tMin: 0.001, tMax, scene,
+                recursionDepth: recursionDepth - 1, lighting, returnSphere
+            })
+
+            // the reflected color will be a proportional mix of the
+            // reflectivity. at reflectivity of 1, the reflection will be
+            // perfect, and no amount of color of the original surface will be
+            // visible
+            return addColors(scaleColor(1 - r, localColor), scaleColor(r, reflectedColor))
         } else {
             return closestSphere.color
         }
@@ -274,25 +307,20 @@ document.getElementsByTagName('canvas')[0].addEventListener('mousedown', e => {
     y = canvas.height / 2 - y
     let viewport = { width: 1, height: 1, distance: 1 }
     let D = canvasPixelToViewportPixel({ x, y }, viewport)
-    let color = traceRay({
+    let sphere = traceRay({
         origin: O, distanceToViewport: D,
         tMin: viewport.distance, tMax: Number.POSITIVE_INFINITY,
-        scene,
+        scene, returnSphere: true
     })
 
     // console.log({ x, y });
     // console.log('D', D);
 
-    let selected = scene.spheres.filter(sphere => {
-        return hashColor(sphere.color) === hashColor(color)
-    })
-    // we use different sphere colors to differentiate
-    selected = selected[0]
-    console.log('selected sphere', selected);
+    console.log('selected sphere', sphere)
+    selectedSphere = sphere
 
-    selectedSphere = selected
     initialMouse = vect(e.x, -e.y)
-    initialCenter = selectedSphere?.center
+    initialCenter = sphere?.center
 })
 
 let initialMouse = vect(0, 0, 0)
@@ -339,15 +367,20 @@ function hashColor([r, g, b]) {
     return r + g * 256 + b * 256 * 256
 }
 
+// autoclamps values to stay within range
 function scaleColor(scalar, [r, g, b]) {
-    return [scalar * r, scalar * g, scalar * b]
+    return [Math.min(scalar * r, 255), Math.min(scalar * g, 255), Math.min(scalar * b, 255)]
+}
+
+function addColors([a, b, c], [x, y, z]) {
+    return [a + x, b + y, c + z]
 }
 
 /**
- * LIGHT
+ * LIGHT + SHADOWS
  */
 
-function computeLighting({ point, normal, scene }) {
+function computeLighting({ point, normal, scene, vecToCamera, specularExponent }) {
     let intensity = 0.0
     let lightVec
     for (let light of scene.lights) {
@@ -363,10 +396,34 @@ function computeLighting({ point, normal, scene }) {
         }
 
         if (lightVec) {
+            // Shadow check
+            let [shadowSphere, shadowT] = closestIntersection({
+                origin: point, distanceToViewport: lightVec,
+                // we use a small but non-zero tMin to avoid surface points
+                // intersecting with themselves, leading to self-shadowing
+                tMin: 0.001, tMax: Number.POSITIVE_INFINITY
+            })
+            if (shadowSphere !== null) {
+                continue // skip this light source
+            }
+
+            // Diffuse
             let normalDotLight = dotProduct(normal, lightVec)
             if (normalDotLight > 0) {
                 // we omit the normal from the equation here because it's vectMag is always 1
                 intensity += light.intensity * (normalDotLight / vectMag(lightVec))
+            }
+
+            // Specular
+            if (specularExponent >= 0) {
+                let reflectionVector = reflectRay({ ray: lightVec, normal })
+                let reflection_dot_vecToCamera = dotProduct(reflectionVector, vecToCamera)
+                if (reflection_dot_vecToCamera > 0) {
+                    let divisor = vectMag(reflectionVector) * vectMag(vecToCamera)
+                    intensity += light.intensity * Math.pow(
+                        reflection_dot_vecToCamera / divisor,
+                        specularExponent)
+                }
             }
         }
     }
@@ -374,6 +431,35 @@ function computeLighting({ point, normal, scene }) {
     return intensity
 }
 
+function reflectRay({ ray, normal }) {
+    let normal_dot_light = dotProduct(normal, ray)
+    let reflectionVector = vectSub(vectScale(2 * normal_dot_light, normal), ray)
+    return reflectionVector
+}
+
 function sphereNormal({ point, sphere }) {
     return vectNorm(vectSub(point, sphere.center))
+}
+
+function closestIntersection({ origin, distanceToViewport, tMin, tMax }) {
+    let closestT = Number.POSITIVE_INFINITY
+    let closestSphere = null
+    for (let sphere of scene.spheres) {
+        let [t1, t2] = intersectRaySphere({ origin, distance: distanceToViewport, sphere })
+        if (t1 >= tMin && t1 <= tMax && t1 < closestT) {
+            closestT = t1
+            closestSphere = sphere
+        }
+        // t2 is always further out than t1 and so this code will not matter
+        // right?? little confused 
+        //
+        // oh, the answer is that when *inside* a sphere itself these distances
+        // change.
+        if (t2 < closestT && t2 >= tMin && t2 <= tMax) {
+            closestT = t2
+            closestSphere = sphere
+        }
+    }
+
+    return [closestSphere, closestT]
 }
