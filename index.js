@@ -5,48 +5,21 @@ let drawMode = '2d'
 let { canvas, ctx, imageData } = setup()
 let currentKeys = new Set()
 let selectedSphere // updated with the currently selected sphere
-
-window.O = vect(0, 0, 0)
-window.addEventListener('keydown', e => currentKeys.add(e.key))
-window.addEventListener('keyup', e => currentKeys.delete(e.key))
-
-
-window.addEventListener('keypress', e => {
-    if (selectedSphere) {
-        if (e.key == 'g') {
-            selectedSphere.center.z += 0.1
-        } else if (e.key == 'h') {
-            selectedSphere.center.z -= 0.1
-        }
-    }
-})
-
+let O = vect(0, 0, 0)
 let scene = {
     spheres: [
         { center: vect(0, -1, 3), radius: 1, color: [255, 0, 0] },
         { center: vect(2, 0, 4), radius: 1, color: [0, 0, 255] },
         { center: vect(-2, 0, 4), radius: 1, color: [0, 255, 0] },
+        { center: vect(0, -5001, 0), radius: 5000, color: [255, 255, 0] },
+    ],
+    lights: [
+        { type: 'ambient', intensity: 0.2 },
+        { type: 'point', intensity: 0.6, position: vect(2, 1, 0) },
+        { type: 'directional', intensity: 0.2, direction: vect(1, 4, 4) }
     ]
 }
 
-function moveOrigin() {
-    let inc = 0.1
-    currentKeys.forEach(k => {
-        if (k == 'w') {
-            O.z += inc
-        } else if (k == 's') {
-            O.z -= inc
-        } else if (k == 'd') {
-            O.x += inc
-        } else if (k == 'a') {
-            O.x -= inc
-        } else if (k == 'e') {
-            O.y += inc
-        } else if (k == 'q') {
-            O.y -= inc
-        }
-    })
-}
 var start = new Date().getTime();
 let tick = () => {
     var end = new Date().getTime();
@@ -59,7 +32,7 @@ let tick = () => {
     // scene.spheres[2].color[1] = (scene.spheres[2].color[1] + 3) % 256
 
     moveOrigin()
-    main({ origin: window.O, scene })
+    main({ origin: O, scene, lighting: true })
     updateCanvas()
     requestAnimationFrame(tick);
 }
@@ -70,8 +43,8 @@ function setup() {
     let canvas = document.createElement('canvas')
     body.append(canvas)
     canvas.id = 'canvas'
-    canvas.width = 400
-    canvas.height = 400
+    canvas.width = 800
+    canvas.height = 800
 
     // setup canvas initial size
     // function onWindowResize() {
@@ -99,10 +72,42 @@ function setup() {
     return { canvas, ctx, imageData }
 }
 
+window.addEventListener('keydown', e => currentKeys.add(e.key))
+window.addEventListener('keyup', e => currentKeys.delete(e.key))
+
+window.addEventListener('keypress', e => {
+    if (selectedSphere) {
+        if (e.key == 'g') {
+            selectedSphere.center.z += 0.1
+        } else if (e.key == 'h') {
+            selectedSphere.center.z -= 0.1
+        }
+    }
+})
+
+function moveOrigin() {
+    let inc = 0.1
+    currentKeys.forEach(k => {
+        if (k == 'w') {
+            O.z += inc
+        } else if (k == 's') {
+            O.z -= inc
+        } else if (k == 'd') {
+            O.x += inc
+        } else if (k == 'a') {
+            O.x -= inc
+        } else if (k == 'e') {
+            O.y += inc
+        } else if (k == 'q') {
+            O.y -= inc
+        }
+    })
+}
+
 // only works in drawMode 2d, does NOT redraw canvas
 function putPixel(x, y, color) {
     // translate origin to center, and reverse y direction
-    let sx = canvas.width / 2 + x
+    let sx = canvas.width / 2 + x - 1
     let sy = canvas.height / 2 - y
 
     let [r, g, b] = color
@@ -185,7 +190,7 @@ function vect(x, y, z) {
  */
 
 // for all the glory of raytracing this just returs a color at the end of the day
-function traceRay({ origin, distanceToViewport, tMin, tMax, scene }) {
+function traceRay({ origin, distanceToViewport, tMin, tMax, scene, lighting = false }) {
     let closestT = Number.POSITIVE_INFINITY
     let closestSphere = null
     for (let sphere of scene.spheres) {
@@ -194,7 +199,10 @@ function traceRay({ origin, distanceToViewport, tMin, tMax, scene }) {
             closestT = t1
             closestSphere = sphere
         }
-        // t2 is further out than t1 and so this code will not run right?? little confused
+        // t2 is always further out than t1 and so this code will not matter
+        // right?? little confused oh, the answer is that when *inside* a sphere
+        // itself these distances change. still not necessary to have this code
+        // because rendering "inside" looks weird regardless
         if (t2 < closestT && t2 >= tMin && t2 <= tMax) {
             closestT = t2
             closestSphere = sphere
@@ -204,7 +212,16 @@ function traceRay({ origin, distanceToViewport, tMin, tMax, scene }) {
     if (closestSphere === null) {
         return BACKGROUND_COLOR // we still need *some* color to draw the pixel as when not intersecting
     } else {
-        return closestSphere.color
+        if (lighting) {
+            // P = O + tD; now that we have our t, we can get the specific point vector
+            let P = vectAdd(origin, vectScale(closestT, distanceToViewport))
+            // the normal to the sphere at that point
+            let N = sphereNormal({ point: P, sphere: closestSphere })
+            let intensityAtPoint = computeLighting({ point: P, normal: N, scene })
+            return scaleColor(intensityAtPoint, closestSphere.color)
+        } else {
+            return closestSphere.color
+        }
     }
 }
 
@@ -228,13 +245,13 @@ function intersectRaySphere({ origin, distance, sphere }) {
         return [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY]
     }
 
-    let t1 = (-b + Math.sqrt(discriminant)) / (2 * a)
-    let t2 = (-b - Math.sqrt(discriminant)) / (2 * a)
+    let t1 = (-b - Math.sqrt(discriminant)) / (2 * a)
+    let t2 = (-b + Math.sqrt(discriminant)) / (2 * a)
     // console.log([t1, t2])
     return [t1, t2]
 }
 
-function main({ origin, scene }) {
+function main({ origin, scene, lighting = false }) {
     let O = origin
     let viewport = { width: 1, height: 1, distance: 1 }
     for (let x = -canvas.width / 2; x <= canvas.width / 2; x++) {
@@ -244,7 +261,7 @@ function main({ origin, scene }) {
             let color = traceRay({
                 origin: O, distanceToViewport: D,
                 tMin: viewport.distance, tMax: Number.POSITIVE_INFINITY,
-                scene,
+                scene, lighting
             })
             putPixel(x, y, color)
         }
@@ -275,7 +292,7 @@ document.getElementsByTagName('canvas')[0].addEventListener('mousedown', e => {
 
     selectedSphere = selected
     initialMouse = vect(e.x, -e.y)
-    initialCenter = selectedSphere.center
+    initialCenter = selectedSphere?.center
 })
 
 let initialMouse = vect(0, 0, 0)
@@ -290,7 +307,7 @@ document.getElementsByTagName('canvas')[0].addEventListener('mousemove', e => {
     if (selectedSphere) {
         let dist = vectSub(vect(e.x, -e.y, 0), initialMouse)
         // selectedSphere.center = vectAdd(vectSetMag(dist, 0.1), selectedSphere.center)
-        selectedSphere.center = vectAdd(vectScale(dist, (2 - O.z) / 400), initialCenter)
+        selectedSphere.center = vectAdd(vectScale((2 - O.z) / 400, dist), initialCenter)
         // console.log(dist, vectNorm(dist));
     }
 })
@@ -305,15 +322,58 @@ function vectNorm(vect) {
     return { x: x / len, y: y / len, z: z / len }
 }
 
-function vectScale({ x, y, z }, scalar) {
+function vectScale(scalar, { x, y, z }) {
     return { x: x * scalar, y: y * scalar, z: z * scalar }
 }
 
 function vectSetMag(vect, mag) {
-    return vectScale(vectNorm(vect), mag)
+    return vectScale(mag, vectNorm(vect))
+}
+
+function vectMag(vect) {
+    return Math.sqrt(dotProduct(vect, vect))
 }
 
 // hashes rgb colors
 function hashColor([r, g, b]) {
     return r + g * 256 + b * 256 * 256
+}
+
+function scaleColor(scalar, [r, g, b]) {
+    return [scalar * r, scalar * g, scalar * b]
+}
+
+/**
+ * LIGHT
+ */
+
+function computeLighting({ point, normal, scene }) {
+    let intensity = 0.0
+    let lightVec
+    for (let light of scene.lights) {
+        if (light.type == 'ambient') {
+            // just gives everything a minimum brightness
+            intensity += light.intensity
+        } else if (light.type == 'point') {
+            // illuminates from a points
+            lightVec = vectSub(light.position, point)
+        } else if (light.type == 'directional') {
+            // illuminates everything from a direction at equal intensity
+            lightVec = light.direction // same direction everywhere (like the sun outside)
+        }
+
+        if (lightVec) {
+            let normalDotLight = dotProduct(normal, lightVec)
+            if (normalDotLight > 0) {
+                // we omit the normal from the equation here because it's vectMag is always 1
+                intensity += light.intensity * (normalDotLight / vectMag(lightVec))
+            }
+        }
+    }
+
+    return intensity
+}
+
+function sphereNormal({ point, sphere }) {
+    return vectNorm(vectSub(point, sphere.center))
 }
