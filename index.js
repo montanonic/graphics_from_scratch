@@ -4,10 +4,30 @@ let drawMode = '2d'
 // in concert
 let { canvas, ctx, imageData } = setup()
 let currentKeys = new Set()
+let selectedSphere // updated with the currently selected sphere
 
 window.O = vect(0, 0, 0)
 window.addEventListener('keydown', e => currentKeys.add(e.key))
 window.addEventListener('keyup', e => currentKeys.delete(e.key))
+
+
+window.addEventListener('keypress', e => {
+    if (selectedSphere) {
+        if (e.key == 'g') {
+            selectedSphere.center.z += 0.1
+        } else if (e.key == 'h') {
+            selectedSphere.center.z -= 0.1
+        }
+    }
+})
+
+let scene = {
+    spheres: [
+        { center: vect(0, -1, 3), radius: 1, color: [255, 0, 0] },
+        { center: vect(2, 0, 4), radius: 1, color: [0, 0, 255] },
+        { center: vect(-2, 0, 4), radius: 1, color: [0, 255, 0] },
+    ]
+}
 
 function moveOrigin() {
     let inc = 0.1
@@ -32,10 +52,14 @@ let tick = () => {
     var end = new Date().getTime();
     var time = end - start;
     start = end
-    console.log('elapsed time:', time);
+    // console.log('elapsed time:', time);
+
+    // scene.spheres[0].color[1] = (scene.spheres[0].color[1] + 3) % 256
+    // scene.spheres[1].color[1] = (scene.spheres[1].color[1] + 3) % 256
+    // scene.spheres[2].color[1] = (scene.spheres[2].color[1] + 3) % 256
 
     moveOrigin()
-    main({ origin: window.O })
+    main({ origin: window.O, scene })
     updateCanvas()
     requestAnimationFrame(tick);
 }
@@ -210,15 +234,7 @@ function intersectRaySphere({ origin, distance, sphere }) {
     return [t1, t2]
 }
 
-function main({ origin }) {
-    let scene = {
-        spheres: [
-            { center: vect(0, -1, 3), radius: 1, color: [255, 0, 0] },
-            { center: vect(2, 0, 4), radius: 1, color: [0, 0, 255] },
-            { center: vect(-2, 0, 4), radius: 1, color: [0, 255, 0] },
-        ]
-    }
-
+function main({ origin, scene }) {
     let O = origin
     let viewport = { width: 1, height: 1, distance: 1 }
     for (let x = -canvas.width / 2; x <= canvas.width / 2; x++) {
@@ -233,4 +249,71 @@ function main({ origin }) {
             putPixel(x, y, color)
         }
     }
+}
+
+document.getElementsByTagName('canvas')[0].addEventListener('mousedown', e => {
+    let { x, y } = e
+    x = x - canvas.width / 2
+    y = canvas.height / 2 - y
+    let viewport = { width: 1, height: 1, distance: 1 }
+    let D = canvasPixelToViewportPixel({ x, y }, viewport)
+    let color = traceRay({
+        origin: O, distanceToViewport: D,
+        tMin: viewport.distance, tMax: Number.POSITIVE_INFINITY,
+        scene,
+    })
+
+    // console.log({ x, y });
+    // console.log('D', D);
+
+    let selected = scene.spheres.filter(sphere => {
+        return hashColor(sphere.color) === hashColor(color)
+    })
+    // we use different sphere colors to differentiate
+    selected = selected[0]
+    console.log('selected sphere', selected);
+
+    selectedSphere = selected
+    initialMouse = vect(e.x, -e.y)
+    initialCenter = selectedSphere.center
+})
+
+let initialMouse = vect(0, 0, 0)
+let initialCenter = null
+document.getElementsByTagName('canvas')[0].addEventListener('mouseup', e => {
+    selectedSphere = null
+    initialCenter = null
+    initialMouse = null
+})
+
+document.getElementsByTagName('canvas')[0].addEventListener('mousemove', e => {
+    if (selectedSphere) {
+        let dist = vectSub(vect(e.x, -e.y, 0), initialMouse)
+        // selectedSphere.center = vectAdd(vectSetMag(dist, 0.1), selectedSphere.center)
+        selectedSphere.center = vectAdd(vectScale(dist, (2 - O.z) / 400), initialCenter)
+        // console.log(dist, vectNorm(dist));
+    }
+})
+
+function vectLength({ x, y, z }) {
+    return Math.sqrt((x * x) + (y * y) + (z * z))
+}
+
+function vectNorm(vect) {
+    let { x, y, z } = vect
+    let len = vectLength(vect)
+    return { x: x / len, y: y / len, z: z / len }
+}
+
+function vectScale({ x, y, z }, scalar) {
+    return { x: x * scalar, y: y * scalar, z: z * scalar }
+}
+
+function vectSetMag(vect, mag) {
+    return vectScale(vectNorm(vect), mag)
+}
+
+// hashes rgb colors
+function hashColor([r, g, b]) {
+    return r + g * 256 + b * 256 * 256
 }
