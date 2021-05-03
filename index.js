@@ -1,10 +1,11 @@
+let BACKGROUND_COLOR = [255, 255, 255] // white
 let drawMode = '2d'
 // note that pixelBuffer is the data field of imageData: both variables are used
 // in concert
-let { canvas, ctx, imageData, pixelBuffer } = setup()
-let BACKGROUND_COLOR = [255, 255, 255] // white
+let { canvas, ctx, imageData } = setup()
 
 main()
+updateCanvas()
 
 function setup() {
     let body = document.getElementsByTagName('body')[0]
@@ -27,25 +28,40 @@ function setup() {
     // setup canvas graphics; we'll be using the imageData technique to draw
     // single pixels
     let ctx = canvas.getContext(drawMode)
-    let imageData = ctx.createImageData(1, 1)
-    let pixelBuffer = imageData.data
-    pixelBuffer[3] = 255 // always full opacity
+    let imageData = ctx.createImageData(canvas.width, canvas.height)
+    let [r, g, b] = BACKGROUND_COLOR
+    for (let i = 0; i < imageData.data.length; i += 4) {
+        imageData.data[i] = r
+        imageData.data[i + 1] = g
+        imageData.data[i + 2] = b
+        imageData.data[i + 3] = 255 // fully opaque
+    }
+    ctx.putImageData(imageData, 0, 0)
 
-    return { canvas, ctx, imageData, pixelBuffer }
+    return { canvas, ctx, imageData }
 }
 
-// only works in drawMode 2d
+// only works in drawMode 2d, does NOT redraw canvas
 function putPixel(x, y, color) {
     // translate origin to center, and reverse y direction
     let sx = canvas.width / 2 + x
     let sy = canvas.height / 2 - y
 
     let [r, g, b] = color
+    // every 4 positions in the array correspond to 1 pixel, so for the x value
+    // we need to multiply by 4, and then for the y value we need to skip y rows
+    // of data, so to do that we multiply by row length and entries per pixel,
+    // which is canvas width * 4
+    let offset = sx * 4 + (sy * 4 * canvas.width)
+    imageData.data[offset] = r
+    imageData.data[offset + 1] = g
+    imageData.data[offset + 2] = b
+    // imageData[offset+3], skip as alpha should already be 255
+}
 
-    pixelBuffer[0] = r
-    pixelBuffer[1] = g
-    pixelBuffer[2] = b
-    ctx.putImageData(imageData, sx, sy)
+// does a full repaint
+function updateCanvas() {
+    ctx.putImageData(imageData, 0, 0)
 }
 
 function firstExperiment() {
