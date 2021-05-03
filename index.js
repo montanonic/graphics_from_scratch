@@ -3,17 +3,51 @@ let drawMode = '2d'
 // note that pixelBuffer is the data field of imageData: both variables are used
 // in concert
 let { canvas, ctx, imageData } = setup()
+let currentKeys = new Set()
 
-main()
-updateCanvas()
+window.O = vect(0, 0, 0)
+window.addEventListener('keydown', e => currentKeys.add(e.key))
+window.addEventListener('keyup', e => currentKeys.delete(e.key))
+
+function moveOrigin() {
+    let inc = 0.1
+    currentKeys.forEach(k => {
+        if (k == 'w') {
+            O.z += inc
+        } else if (k == 's') {
+            O.z -= inc
+        } else if (k == 'd') {
+            O.x += inc
+        } else if (k == 'a') {
+            O.x -= inc
+        } else if (k == 'e') {
+            O.y += inc
+        } else if (k == 'q') {
+            O.y -= inc
+        }
+    })
+}
+var start = new Date().getTime();
+let tick = () => {
+    var end = new Date().getTime();
+    var time = end - start;
+    start = end
+    console.log('elapsed time:', time);
+
+    moveOrigin()
+    main({ origin: window.O })
+    updateCanvas()
+    requestAnimationFrame(tick);
+}
+tick()
 
 function setup() {
     let body = document.getElementsByTagName('body')[0]
     let canvas = document.createElement('canvas')
     body.append(canvas)
     canvas.id = 'canvas'
-    canvas.width = 500
-    canvas.height = 500
+    canvas.width = 400
+    canvas.height = 400
 
     // setup canvas initial size
     // function onWindowResize() {
@@ -176,7 +210,7 @@ function intersectRaySphere({ origin, distance, sphere }) {
     return [t1, t2]
 }
 
-function main() {
+function main({ origin }) {
     let scene = {
         spheres: [
             { center: vect(0, -1, 3), radius: 1, color: [255, 0, 0] },
@@ -185,7 +219,7 @@ function main() {
         ]
     }
 
-    let O = vect(0, 0, 0)
+    let O = origin
     let viewport = { width: 1, height: 1, distance: 1 }
     for (let x = -canvas.width / 2; x <= canvas.width / 2; x++) {
         for (let y = -canvas.height / 2; y <= canvas.height / 2; y++) {
